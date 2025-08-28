@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from RoPE import apply_angles_2d, generate_angles_2d
+from rope import apply_angles_2d, generate_angles_2d
 from einops import rearrange
 
 
