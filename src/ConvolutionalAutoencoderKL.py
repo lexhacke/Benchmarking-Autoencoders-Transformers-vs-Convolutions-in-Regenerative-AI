@@ -3,8 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from attention import SpatialAttention
-from diffusers.models.modeling_utils import ModelMixin
-from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 
 class ResBlock(nn.Module):
