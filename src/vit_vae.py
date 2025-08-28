@@ -10,11 +10,11 @@ class Encoder(nn.Module):
     Vision Transformer Encoder Module for 2D images.
     - Takes an input image of form B, 3, H, W and encodes it into a latent representation of shape B, D, N.
     """
-    def __init__(self, z_channels, hw, emb_dim, patch_size, n_heads=8, dropout=0.1, layers=6):
+    def __init__(self, z_channels, hw, emb_dim, patch_size, n_heads=8, dropout=0.1, layers=6, device='cpu'):
         assert emb_dim % n_heads == 0, "Embedding dimension can't be partitioned into n_heads"
         super().__init__()
         self.patchifier = nn.Conv2d(3, emb_dim, kernel_size=patch_size, stride=patch_size)
-        self.Blocks = nn.ModuleList([ViTBlock(hw // patch_size, hw // patch_size, emb_dim, n_heads=n_heads, dropout=dropout) for _ in range(layers)])
+        self.Blocks = nn.ModuleList([ViTBlock(hw // patch_size, hw // patch_size, emb_dim, n_heads=n_heads, dropout=dropout, device=device) for _ in range(layers)])
         self.post_norm = nn.LayerNorm(emb_dim)
         self.compress_latent = nn.Linear(emb_dim, z_channels*2)
 
@@ -33,7 +33,7 @@ class Decoder(nn.Module):
     Vision Transformer Decoder Module for 1D latent token sequences.
     - Takes an input image of form B, D, N and decodes it into B, 3, H, W image(s).
     """
-    def __init__(self, z_channels, hw, emb_dim, patch_size, n_heads=8, dropout=0.1, layers=6):
+    def __init__(self, z_channels, hw, emb_dim, patch_size, n_heads=8, dropout=0.1, layers=6, device='cpu'):
         assert emb_dim % n_heads == 0, "Embedding dimension can't be partitioned into n_heads"
         super().__init__()
         self.hw = hw // patch_size
@@ -41,7 +41,7 @@ class Decoder(nn.Module):
         self.decompress_latent = nn.Linear(z_channels, emb_dim)
         self.post_norm = nn.LayerNorm(emb_dim)
         self.emb_to_patch = nn.Linear(emb_dim, 3*(patch_size**2))
-        self.Blocks = nn.ModuleList([ViTBlock(hw // patch_size, hw // patch_size, emb_dim, n_heads=n_heads, dropout=dropout) for _ in range(layers)])
+        self.Blocks = nn.ModuleList([ViTBlock(hw // patch_size, hw // patch_size, emb_dim, n_heads=n_heads, dropout=dropout, device=device) for _ in range(layers)])
 
     def forward(self, x):
         # x is the latent DiagonalGaussianDistribution sample, shape [B, z, HW/p**2] we need [B, HW/p**2, z]

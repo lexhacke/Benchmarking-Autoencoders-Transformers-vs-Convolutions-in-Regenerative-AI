@@ -44,7 +44,9 @@ class Attention(nn.Module):
     Then, we apply scaled dot-product attention across the token dimensions.
     Finally, we project the output back to the original embedding dimension.
     """
-    def __init__(self, H,W, emb_dim, n_heads=8):
+    def __init__(self, H,W, emb_dim, device="cpu", n_heads=8):
+        assert emb_dim % n_heads == 0, "Embedding dimension can't be partitioned into n_heads"
+        assert emb_dim % 2 == 0, "Embedding dimension must be even for RoPE!"
         super().__init__()
         self.H = H
         self.W = W
@@ -53,7 +55,7 @@ class Attention(nn.Module):
         self.qkv = nn.Linear(emb_dim, 3*emb_dim, bias=False)
         self.apply_angles_2d = apply_angles_2d
         self.proj = nn.Linear(emb_dim, emb_dim)
-        self.register_buffer("freq", generate_angles_2d(H, W, head_dim), persistent=False)
+        self.register_buffer("freq", generate_angles_2d(H, W, head_dim, device=device), persistent=False)
 
     def forward(self, x):
         B, N, D = x.shape
@@ -63,8 +65,8 @@ class Attention(nn.Module):
         q = rearrange(q, "B (H W) (h D) -> B h H W D", H=self.H, W=self.W, h=self.n_heads)
         k = rearrange(k, "B (H W) (h D) -> B h H W D", H=self.H, W=self.W, h=self.n_heads)
 
-        q = apply_angles_2d(q, self.freq)
-        k = apply_angles_2d(k, self.freq)
+        q = self.apply_angles_2d(q, self.freq)
+        k = self.apply_angles_2d(k, self.freq)
 
         # to 1D
         q = rearrange(q, "B h H W D -> B h (H W) D", H=self.H, W=self.W, h=self.n_heads)
@@ -82,11 +84,11 @@ class ViTBlock(nn.Module):
     Notes:
     - Inputs are normed before attention and MLP (Pre-LN)
     """
-    def __init__(self, H, W, emb_dim, n_heads=8, dropout=0.1):
+    def __init__(self, H, W, emb_dim, n_heads=8, dropout=0.1, device='cpu'):
         self.H, self.W, self.emb_dim = H, W, emb_dim
         super().__init__()
         self.attn = nn.Sequential(nn.LayerNorm(emb_dim),
-                                Attention(H,W,emb_dim,n_heads=n_heads))
+                                Attention(H,W,emb_dim,n_heads=n_heads, device=device))
         self.MLP = nn.Sequential(nn.LayerNorm(emb_dim),
                                 nn.Linear(emb_dim, emb_dim*4, bias=True),
                                 nn.GELU(),

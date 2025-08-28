@@ -1,7 +1,7 @@
 import torch
 from einops import rearrange
 
-def generate_angles_2d(H,W,D, freq=None):
+def generate_angles_2d(H,W,D, device='cpu', freq=None):
     """
     Generates a 3D frequency field for 2D Rotary Positional Embeddings.
     - H: Height of the feature map.
@@ -10,9 +10,9 @@ def generate_angles_2d(H,W,D, freq=None):
     - freq: Optional precomputed frequency tensor for the embedding dimension.
     """
     assert D % 2 == 0, "Embedding Dimension must be even!"
-    freq = torch.tensor([10000**(-2*i/D) for i in range(int(D/2))]) if freq is None else freq
-    pos = torch.outer(torch.linspace(-1, 1, steps=H),torch.linspace(-1, 1, steps=W))
-    freq_tensor = torch.einsum("ij,k->ijk", pos, freq)
+    freq = torch.tensor([10000**(-2*i/D) for i in range(int(D/2))], device=device) if freq is None else freq
+    pos = torch.outer(torch.linspace(-1, 1, steps=H, device=device),torch.linspace(-1, 1, steps=W, device=device))
+    freq_tensor = torch.einsum("ij,k->ijk", pos, freq) # outer product
     return freq_tensor
 
 def apply_angles_2d(x, f):
