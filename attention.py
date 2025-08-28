@@ -79,6 +79,8 @@ class Attention(nn.Module):
 class ViTBlock(nn.Module):
     """
     A Transformer Block for the Vision Transformer Autoencoder - Self-Attention + MLP
+    Notes:
+    - Inputs are normed before attention and MLP (Pre-LN)
     """
     def __init__(self, H, W, emb_dim, n_heads=8, dropout=0.1):
         self.H, self.W, self.emb_dim = H, W, emb_dim

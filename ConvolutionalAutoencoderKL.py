@@ -43,18 +43,18 @@ class ResBlock(nn.Module):
 class Encoder(nn.Module):
     """
     Convolutional Encoder Module for 2D images.
-    - Takes an input image of form B, 3, H, W and encodes it into a latent representation.
+    - Takes an input image of form B, 3, H, W and encodes it into a latent representation of shape B, D, hw^2.
     """
-    def __init__(self, img_shape, filters, attn_resolutions, z_channels, depth):
+    def __init__(self, z_channels, hw, filters, attn_resolutions, depth):
         super().__init__()
         self.z_channels = z_channels
-        self.out_shape = (z_channels, img_shape[1] // 2**len(filters), img_shape[2] // 2**len(filters))
+        self.out_shape = (z_channels, hw // 2**len(filters), hw // 2**len(filters))
         self.conv_out = nn.Conv2d(filters[-1], 2*z_channels, kernel_size=3, stride=1, padding=1)
 
-        self.prep = nn.Conv2d(img_shape[0], filters[0], kernel_size=3, stride=2, padding=1)
+        self.prep = nn.Conv2d(3, filters[0], kernel_size=3, stride=2, padding=1)
         self.down = nn.ModuleList()
 
-        current_res = img_shape[-1]
+        current_res = hw
         for i in range(len(filters)-1):
             current_res = current_res // 2
             block = nn.ModuleList([ResBlock(filters[i], filters[i+1])])
@@ -79,26 +79,28 @@ class Encoder(nn.Module):
         x = self.mid(x)
         x = self.norm(x)
         x = self.conv_out(x)
+        x = rearrange(x, "B z H W -> B z (H W)")
         dist = DiagonalGaussianDistribution(x)
         return dist
 
 class Decoder(nn.Module):
     """
     Convolutional Decoder Module for 2D latents.
-    - Takes an input latent of form B, *latent_shape and decodes it into a B, 3, H, W image.
+    - Takes an input latent of form B, D, hw^2 and decodes it into B, 3, H, W image(s).
     """
-    def __init__(self, latent_shape, filters, attn_resolutions, depth):
+    def __init__(self, z_channels, latent_hw, filters, attn_resolutions, depth):
         super().__init__()
-        self.latent_shape = latent_shape
-        self.out_shape = (3, latent_shape[1]*2**len(filters), latent_shape[2]*2**len(filters))
-        self.conv_in = nn.Conv2d(latent_shape[0], filters[0], kernel_size=3, stride=1, padding=1)
+        self.latent_hw = latent_hw
+        self.z_channels = z_channels
+        self.out_shape = (3, latent_hw*2**len(filters), latent_hw*2**len(filters))
+        self.conv_in = nn.Conv2d(z_channels, filters[0], kernel_size=3, stride=1, padding=1)
         self.mid = nn.Sequential(ResBlock(filters[0], filters[0]),
                                  SpatialAttention(filters[0]),
                                  SpatialAttention(filters[0]),
                                  ResBlock(filters[0], filters[0]))
 
         self.up = nn.ModuleList()
-        current_res = latent_shape[-1]
+        current_res = latent_hw
         for i in range(len(filters)-1):
             current_res = current_res * 2
             block = nn.ModuleList([ResBlock(filters[i], filters[i+1])])
@@ -114,9 +116,10 @@ class Decoder(nn.Module):
         self.conv_out = nn.Conv2d(filters[-1], 3, kernel_size=3, stride=1, padding=1)
 
     def forward(self, x):
+        x = rearrange(x, "B z (H W) -> B z H W", H=self.latent_hw, W=self.latent_hw)
         B, D, H, W = x.shape
-        assert (H, W) == self.latent_shape[1:], f"expected input shape {self.latent_shape[1:]}, got {(H, W)}"
-        assert D == self.latent_shape[0], f"expected {self.latent_shape[0]} channels, got {D}"
+        assert (H, W) == (self.latent_hw, self.latent_hw), f"expected input shape {(self.latent_hw, self.latent_hw)}, got {(H, W)}"
+        assert D == self.z_channels, f"expected {self.z_channels} channels, got {D}"
         x = self.conv_in(x)
         x = self.mid(x)
         for block in self.up:
@@ -125,14 +128,13 @@ class Decoder(nn.Module):
         x = self.norm(x)
         x = self.upsample(x)
         x = self.conv_out(x)
-        x = F.tanh(x)
-        return x
+        return torch.tanh(x)
     
 if __name__ == "__main__":
-    img_shape = (3, 128, 128)
+    hw = 128
     filters = [32, 64, 128, 256]
 
-    diagonal = Encoder(img_shape, filters, [], 4, 2)(torch.randn(4, 3, 128, 128))
+    diagonal = Encoder(4, hw, filters, [], 2)(torch.randn(4, 3, 128, 128))
     print(diagonal.sample().shape, diagonal.logvar.shape, diagonal.mean.shape, diagonal.mode().shape)
-    reconstructed = Decoder((4, img_shape[1] // (2**(len(filters))), img_shape[2] // 2**(len(filters))), filters, [], 2)(diagonal.sample())
+    reconstructed = Decoder(4, hw // (2**(len(filters))),  filters, [], 2)(diagonal.sample())
     print(reconstructed.shape)
