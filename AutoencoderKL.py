@@ -1,0 +1,134 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from einops import rearrange
+from attention import SpatialAttention
+from diffusers.models.modeling_utils import ModelMixin
+from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
+
+class ResBlock(nn.Module):
+    """
+    ResNet-Style Residual Block Module with Group Normalization and Conv2d layers.
+    - Applies automatic channel reshaping if input and output channels differ.
+    """
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.in_c = in_c
+        self.out_c = out_c
+        self.reshape = False
+        if in_c != out_c:
+            self.reshape = True
+            self.conv_reshape = nn.Conv2d(in_c, out_c, kernel_size=3, stride=1, padding=1)
+        self.norm1 = nn.GroupNorm(num_groups=32, num_channels=out_c, eps=1e-6, affine=True)
+        self.conv1 = nn.Conv2d(out_c, out_c, kernel_size=3, stride=1, padding=1)
+        self.norm2 = nn.GroupNorm(num_groups=32, num_channels=out_c, eps=1e-6, affine=True)
+        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        assert C == self.in_c, f"expected {self.in_c} channels, got {C}"
+        if self.reshape:
+            x = self.conv_reshape(x)
+        res = x
+        x = self.norm1(x)
+        x = x * torch.sigmoid(x)
+        x = self.conv1(x)
+        x = self.norm2(x)
+        x = x * torch.sigmoid(x)
+        x = self.conv2(x)
+        x = x + res
+        return x
+
+class Encoder(nn.Module):
+    """
+    Convolutional Encoder Module for 2D images.
+    - Takes an input image of form B, 3, H, W and encodes it into a latent representation.
+    """
+    def __init__(self, img_shape, filters, attn_resolutions, z_channels, depth):
+        super().__init__()
+        self.z_channels = z_channels
+        self.out_shape = (z_channels, img_shape[1] // 2**len(filters), img_shape[2] // 2**len(filters))
+        self.conv_out = nn.Conv2d(filters[-1], 2*z_channels, kernel_size=3, stride=1, padding=1)
+
+        self.prep = nn.Conv2d(img_shape[0], filters[0], kernel_size=3, stride=2, padding=1)
+        self.down = nn.ModuleList()
+
+        current_res = img_shape[-1]
+        for i in range(len(filters)-1):
+            current_res = current_res // 2
+            block = nn.ModuleList([ResBlock(filters[i], filters[i+1])])
+            for _ in range(depth-1):
+                block.append(ResBlock(filters[i+1], filters[i+1]))
+            if current_res in attn_resolutions:
+                block.append(SpatialAttention(filters[i+1]))
+            block.append(nn.Conv2d(filters[i+1], filters[i+1], kernel_size=3, stride=2, padding=1))
+            self.down.append(block)
+
+        self.mid = nn.Sequential(ResBlock(filters[-1], filters[-1]),
+                                SpatialAttention(filters[-1]),
+                                ResBlock(filters[-1], filters[-1]))
+
+        self.norm = nn.GroupNorm(num_groups=32, num_channels=filters[-1], eps=1e-6, affine=True)
+
+    def forward(self, x):
+        x = self.prep(x)
+        for block in self.down:
+            for layer in block:
+                x = layer(x)
+        x = self.mid(x)
+        x = self.norm(x)
+        x = self.conv_out(x)
+        dist = DiagonalGaussianDistribution(x)
+        return dist
+
+class Decoder(nn.Module):
+    def __init__(self, latent_shape, filters, attn_resolutions, depth):
+        super().__init__()
+        self.latent_shape = latent_shape
+        self.out_shape = (3, latent_shape[1]*2**len(filters), latent_shape[2]*2**len(filters))
+        self.conv_in = nn.Conv2d(latent_shape[0], filters[0], kernel_size=3, stride=1, padding=1)
+        self.mid = nn.Sequential(ResBlock(filters[0], filters[0]),
+                                 SpatialAttention(filters[0]),
+                                 SpatialAttention(filters[0]),
+                                 ResBlock(filters[0], filters[0]))
+
+        self.up = nn.ModuleList()
+        current_res = latent_shape[-1]
+        for i in range(len(filters)-1):
+            current_res = current_res * 2
+            block = nn.ModuleList([ResBlock(filters[i], filters[i+1])])
+            for _ in range(depth-1):
+                block.append(ResBlock(filters[i+1], filters[i+1]))
+            if current_res in attn_resolutions:
+                block.append(SpatialAttention(filters[i+1]))
+            block.append(nn.Upsample(scale_factor=2, mode="bilinear"))
+            self.up.append(block)
+
+        self.norm = nn.GroupNorm(num_groups=32, num_channels=filters[-1], eps=1e-6, affine=True)
+        self.upsample = nn.Upsample(scale_factor=2, mode="bilinear")
+        self.conv_out = nn.Conv2d(filters[-1], 3, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, x):
+        B, D, H, W = x.shape
+        assert (H, W) == self.latent_shape[1:], f"expected input shape {self.latent_shape[1:]}, got {(H, W)}"
+        assert D == self.latent_shape[0], f"expected {self.latent_shape[0]} channels, got {D}"
+        x = self.conv_in(x)
+        x = self.mid(x)
+        for block in self.up:
+            for layer in block:
+                x = layer(x)
+        x = self.norm(x)
+        x = self.upsample(x)
+        x = self.conv_out(x)
+        x = F.tanh(x)
+        return x
+    
+
+img_shape = (3, 128, 128)
+filters = [32, 64, 128, 256]
+
+diagonal = Encoder(img_shape, filters, [], 4, 2)(torch.randn(4, 3, 128, 128))
+print(diagonal.sample().shape, diagonal.logvar.shape, diagonal.mean.shape, diagonal.mode().shape)
+reconstructed = Decoder((4, img_shape[1] // (2**(len(filters))), img_shape[2] // 2**(len(filters))), filters, [], 2)(diagonal.sample())
+print(reconstructed.shape)
