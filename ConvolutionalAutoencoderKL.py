@@ -83,6 +83,10 @@ class Encoder(nn.Module):
         return dist
 
 class Decoder(nn.Module):
+    """
+    Convolutional Decoder Module for 2D latents.
+    - Takes an input latent of form B, *latent_shape and decodes it into a B, 3, H, W image.
+    """
     def __init__(self, latent_shape, filters, attn_resolutions, depth):
         super().__init__()
         self.latent_shape = latent_shape
@@ -124,11 +128,11 @@ class Decoder(nn.Module):
         x = F.tanh(x)
         return x
     
+if __name__ == "__main__":
+    img_shape = (3, 128, 128)
+    filters = [32, 64, 128, 256]
 
-img_shape = (3, 128, 128)
-filters = [32, 64, 128, 256]
-
-diagonal = Encoder(img_shape, filters, [], 4, 2)(torch.randn(4, 3, 128, 128))
-print(diagonal.sample().shape, diagonal.logvar.shape, diagonal.mean.shape, diagonal.mode().shape)
-reconstructed = Decoder((4, img_shape[1] // (2**(len(filters))), img_shape[2] // 2**(len(filters))), filters, [], 2)(diagonal.sample())
-print(reconstructed.shape)
+    diagonal = Encoder(img_shape, filters, [], 4, 2)(torch.randn(4, 3, 128, 128))
+    print(diagonal.sample().shape, diagonal.logvar.shape, diagonal.mean.shape, diagonal.mode().shape)
+    reconstructed = Decoder((4, img_shape[1] // (2**(len(filters))), img_shape[2] // 2**(len(filters))), filters, [], 2)(diagonal.sample())
+    print(reconstructed.shape)
