@@ -9,6 +9,8 @@ class Encoder(nn.Module):
     """
     Vision Transformer Encoder Module for 2D images.
     - Takes an input image of form B, 3, H, W and encodes it into a latent representation of shape B, D, N.
+    - D = z_channels, N = HW/patch_size^2
+    - Compression ratio is ultimately D/(3 * patch_size^2), so with z_channels=4 and patch_size=16, we get 4/(3*256) = 1/192
     """
     def __init__(self, z_channels, hw, emb_dim, patch_size, n_heads=8, dropout=0.1, layers=6, device='cpu'):
         assert emb_dim % n_heads == 0, "Embedding dimension can't be partitioned into n_heads"

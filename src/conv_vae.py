@@ -12,6 +12,7 @@ class ResBlock(nn.Module):
     """
     def __init__(self, in_c, out_c):
         super().__init__()
+        assert in_c % 32 == 0, f"Channels must be divisible by Groups (32) recieved: {in_c}"
         self.in_c = in_c
         self.out_c = out_c
         self.reshape = False
@@ -41,7 +42,9 @@ class ResBlock(nn.Module):
 class Encoder(nn.Module):
     """
     Convolutional Encoder Module for 2D images.
-    - Takes an input image of form B, 3, H, W and encodes it into a latent representation of shape B, D, hw^2.
+    - Takes an input image of form B, 3, H, W and encodes it into a latent representation of shape B, D, hw
+    - D = z_channels, hw = HW/2^(2n) where n is len(filters)
+    - Compression ratio is ultimately D/(3 * 2^(2n)), so with z_channels=4 and n=4, we get 4/(3*256) = 1/192
     """
     def __init__(self, z_channels, hw, filters, attn_resolutions, depth):
         super().__init__()

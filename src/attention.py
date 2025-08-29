@@ -46,7 +46,7 @@ class Attention(nn.Module):
     """
     def __init__(self, H,W, emb_dim, device="cpu", n_heads=8):
         assert emb_dim % n_heads == 0, "Embedding dimension can't be partitioned into n_heads"
-        assert emb_dim % 2 == 0, "Embedding dimension must be even for RoPE!"
+        assert (emb_dim // n_heads) % 2 == 0, "Head Dim must be even for RoPE!"
         super().__init__()
         self.H = H
         self.W = W
